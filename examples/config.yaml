@@ -1,0 +1,277 @@
+# TGWrapper Configuration Example (YAML)
+# This file demonstrates all available configuration options for tgwrapper.
+
+# Bot configuration
+bot:
+    # Telegram bot token (required)
+    token: "${BOT_TOKEN}"
+
+    # Bot commands to register with BotFather
+    commands:
+        - command: menu
+          description: Show main menu
+        - command: help
+          description: Display help information
+        - command: settings
+          description: Bot settings
+
+    # Warning chat for sending error notifications (optional)
+    warning_chat:
+        chat_id: -1001234567890
+        topic_id: 123
+
+    # Log chat for sending audit logs (optional)
+    log_chat:
+        chat_id: -1001234567890
+        topic_id: 456
+
+    # Delete registered commands when bot stops
+    delete_commands_on_exit: false
+
+# Main menu ID (must match a menu defined below)
+main_menu_id: main
+
+# Menu definitions
+menus:
+    # Main menu
+    main:
+        id: main
+        text: |
+            🏠 *Main Menu*
+
+            Welcome! Please select an option:
+        buttons:
+            # First row with two buttons
+            - - text: "📊 Dashboard"
+                flow_id: dashboard_flow
+              - text: "⚙️ Settings"
+                menu_id: settings_menu
+            # Second row with one button
+            - - text: "📖 Help"
+                callback: show_help
+            # Third row with URL button
+            - - text: "🌐 Website"
+                url: "https://example.com"
+        # Optional: conditional display
+        condition: "env.IsAuthenticated"
+
+    # Settings submenu
+    settings_menu:
+        id: settings_menu
+        text: |
+            ⚙️ *Settings*
+
+            Configure your preferences:
+        buttons:
+            - - text: "🔔 Notifications"
+                callback: toggle_notifications
+              - text: "🌍 Language"
+                flow_id: select_language
+            - - text: "⬅️ Back"
+                callback: main_menu
+
+    # Paginated menu example
+    items_menu:
+        id: items_menu
+        text: "📋 *Items List*\n\nBrowse available items:"
+        pages:
+            - id: page_1
+              name: "Page 1"
+              buttons:
+                  - - text: "Item 1"
+                      callback: "item:1"
+                    - text: "Item 2"
+                      callback: "item:2"
+                  - - text: "Item 3"
+                      callback: "item:3"
+                    - text: "Item 4"
+                      callback: "item:4"
+            - id: page_2
+              name: "Page 2"
+              buttons:
+                  - - text: "Item 5"
+                      callback: "item:5"
+                    - text: "Item 6"
+                      callback: "item:6"
+
+# Flow (conversation) definitions
+flows:
+    # Simple single-step flow with dynamic buttons
+    dashboard_flow:
+        id: dashboard_flow
+        name: Dashboard
+        initial_step: select_metric
+        ttl: 30m # Conversation timeout
+        steps:
+            select_metric:
+                prompt_text: |
+                    📊 *Dashboard*
+
+                    Select a metric to view:
+                keyboard:
+                    type: dynamic
+                    provider: getMetrics # Name of registered KeyboardProvider
+                    columns: 2
+                    add_back: true
+                    add_main: true
+                    callback_prefix: "metric:"
+                input_type: callback
+                store_as: selectedMetric
+                on_complete: displayMetricData
+
+    # Multi-step flow with text input and validation
+    user_registration:
+        id: user_registration
+        name: User Registration
+        initial_step: enter_name
+        ttl: 15m
+        steps:
+            enter_name:
+                prompt_text: |
+                    📝 *Registration*
+
+                    Please enter your name:
+                keyboard:
+                    add_back: true
+                input_type: text
+                store_as: userName
+                validation:
+                    type: regex
+                    pattern: "^[a-zA-Z ]{2,50}$"
+                    error_msg: "Name must be 2-50 letters only"
+                next_step: enter_email
+
+            enter_email:
+                prompt_text: |
+                    📝 *Registration*
+
+                    Please enter your email address:
+                keyboard:
+                    add_back: true
+                input_type: text
+                store_as: userEmail
+                validation:
+                    type: email
+                    error_msg: "Please enter a valid email address"
+                next_step: confirm_registration
+
+            confirm_registration:
+                prompt_text: |
+                    📝 *Registration*
+
+                    Please confirm your information:
+                    Name: {{.userName}}
+                    Email: {{.userEmail}}
+                keyboard:
+                    type: static
+                    buttons:
+                        - - text: "✅ Confirm"
+                            callback: "confirm:yes"
+                          - text: "❌ Cancel"
+                            callback: "confirm:no"
+                input_type: callback
+                store_as: confirmation
+                branches:
+                    - condition: 'input == "confirm:yes"'
+                      next_step: "" # Empty means end of flow
+                on_complete: completeRegistration
+
+    # Flow with numeric validation
+    amount_input:
+        id: amount_input
+        name: Amount Input
+        initial_step: enter_amount
+        steps:
+            enter_amount:
+                prompt_text: |
+                    💰 *Enter Amount*
+
+                    Please enter an amount (1-1000):
+                keyboard:
+                    add_back: true
+                input_type: text
+                store_as: amount
+                validation:
+                    type: number
+                    min: "1"
+                    max: "1000"
+                    error_msg: "Amount must be between 1 and 1000"
+                on_complete: processAmount
+
+    # Flow with custom validation
+    address_input:
+        id: address_input
+        name: Ethereum Address Input
+        initial_step: enter_address
+        steps:
+            enter_address:
+                prompt_text: |
+                    🔗 *Enter Address*
+
+                    Please enter an Ethereum address:
+                keyboard:
+                    add_back: true
+                input_type: text
+                store_as: ethAddress
+                validation:
+                    type: address
+                    error_msg: "Please enter a valid Ethereum address (0x...)"
+                on_complete: processAddress
+
+    # Flow with branching logic
+    support_flow:
+        id: support_flow
+        name: Support Request
+        initial_step: select_category
+        steps:
+            select_category:
+                prompt_text: |
+                    🆘 *Support*
+
+                    What do you need help with?
+                keyboard:
+                    type: static
+                    buttons:
+                        - - text: "🐛 Bug Report"
+                            callback: "category:bug"
+                          - text: "💡 Feature Request"
+                            callback: "category:feature"
+                        - - text: "❓ General Question"
+                            callback: "category:question"
+                    add_back: true
+                input_type: callback
+                store_as: category
+                branches:
+                    - condition: 'input == "category:bug"'
+                      next_step: describe_bug
+                    - condition: 'input == "category:feature"'
+                      next_step: describe_feature
+                    - condition: 'input == "category:question"'
+                      next_step: ask_question
+
+            describe_bug:
+                prompt_text: |
+                    🐛 *Bug Report*
+
+                    Please describe the bug in detail:
+                input_type: text
+                store_as: bugDescription
+                on_complete: submitBugReport
+
+            describe_feature:
+                prompt_text: |
+                    💡 *Feature Request*
+
+                    Please describe the feature you'd like:
+                input_type: text
+                store_as: featureDescription
+                on_complete: submitFeatureRequest
+
+            ask_question:
+                prompt_text: |
+                    ❓ *General Question*
+
+                    Please type your question:
+                input_type: text
+                store_as: question
+                on_complete: submitQuestion

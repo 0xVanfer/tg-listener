@@ -1,0 +1,222 @@
+# tg-listener Test Configuration
+# This configuration file demonstrates all features of the tgwrapper library
+
+bot:
+    token: "${BOT_TOKEN}" # Set via environment variable
+    commands:
+        - command: menu
+          description: "📱 Show main menu"
+        - command: help
+          description: "❓ Show help information"
+        - command: test
+          description: "🧪 Quick test"
+    delete_commands_on_exit: true
+    debug: true
+
+main_menu_id: "main"
+
+menus:
+    main:
+        id: main
+        text: |
+            🏠 *Main Menu*
+
+            Welcome to tgwrapper test Bot!
+            Please select a feature to test:
+        buttons:
+            - - text: "📂 Multi-level Menu"
+                menu_id: level_2
+              - text: "🔗 Link Buttons"
+                menu_id: links
+            - - text: "📝 Text Input Test"
+                flow_id: text_input
+              - text: "🌐 API Call Test"
+                flow_id: api_test
+            - - text: "🎯 Dynamic Buttons"
+                flow_id: dynamic_buttons
+            - - text: "📖 GitHub"
+                url: "https://github.com/mymmrac/telego"
+
+    level_2:
+        id: level_2
+        text: |
+            📂 *Level 2 Menu*
+
+            Current location: Main Menu > Level 2
+        buttons:
+            - - text: "📁 Enter Level 3-A"
+                menu_id: level_3_a
+              - text: "📁 Enter Level 3-B"
+                menu_id: level_3_b
+            - - text: "⬅️ Back to Main Menu"
+                callback: main_menu
+
+    level_3_a:
+        id: level_3_a
+        text: |
+            📁 *Level 3 Menu A*
+
+            Current location: Main Menu > Level 2 > Level 3-A
+        buttons:
+            - - text: "📄 Enter Level 4"
+                menu_id: level_4
+            - - text: "⬅️ Back to Level 2"
+                menu_id: level_2
+              - text: "🏠 Main Menu"
+                callback: main_menu
+
+    level_3_b:
+        id: level_3_b
+        text: |
+            📁 *Level 3 Menu B*
+
+            Current location: Main Menu > Level 2 > Level 3-B
+        buttons:
+            - - text: "ℹ️ Show Info"
+                callback: show_info
+            - - text: "⬅️ Back to Level 2"
+                menu_id: level_2
+              - text: "🏠 Main Menu"
+                callback: main_menu
+
+    level_4:
+        id: level_4
+        text: |
+            📄 *Level 4 Menu*
+
+            🎉 Congratulations! You have reached Level 4!
+
+            Current location: Main Menu > Level 2 > Level 3-A > Level 4
+        buttons:
+            - - text: "🔄 Execute Action"
+                callback: level_4_action
+            - - text: "⬅️ Back to Level 3"
+                menu_id: level_3_a
+              - text: "🏠 Main Menu"
+                callback: main_menu
+
+    links:
+        id: links
+        text: |
+            🔗 *Link Button Test*
+
+            Click the link buttons below to open in browser:
+        buttons:
+            - - text: "🐙 GitHub"
+                url: "https://github.com"
+              - text: "📘 Telegram"
+                url: "https://telegram.org"
+            - - text: "🔍 Google"
+                url: "https://www.google.com"
+              - text: "📰 Hacker News"
+                url: "https://news.ycombinator.com"
+            - - text: "⬅️ Back to Main Menu"
+                callback: main_menu
+
+flows:
+    text_input:
+        id: text_input
+        name: "Text Input Test"
+        initial_step: input_name
+        steps:
+            input_name:
+                id: input_name
+                prompt_text: |
+                    📝 *Text Input Test*
+
+                    Please enter your name:
+                keyboard:
+                    add_back: true
+                input_type: text
+                store_as: userName
+                next_step: input_message
+
+            input_message:
+                id: input_message
+                prompt_text: |
+                    📝 *Text Input Test*
+
+                    Nice to meet you!
+
+                    Please enter a message:
+                keyboard:
+                    add_back: true
+                input_type: text
+                store_as: userMessage
+                next_step: select_action
+
+            select_action:
+                id: select_action
+                prompt_text: |
+                    📝 *Text Input Test*
+
+                    Please select next action:
+                keyboard:
+                    type: static
+                    buttons:
+                        - - text: "📤 Show Input"
+                            callback: "action:show"
+                          - text: "🔄 Re-enter"
+                            callback: "action:restart"
+                    add_back: true
+                    add_main: true
+                input_type: callback
+                store_as: selectedAction
+                on_complete: handleTextInputAction
+
+    api_test:
+        id: api_test
+        name: "API Call Test"
+        initial_step: select_api
+        steps:
+            select_api:
+                id: select_api
+                prompt_text: |
+                    🌐 *API Call Test*
+
+                    Select an API to call:
+
+                    ⚠️ These are real API calls
+                keyboard:
+                    type: static
+                    buttons:
+                        - - text: "🐱 Random Cat"
+                            callback: "api:cat"
+                          - text: "🐕 Random Dog"
+                            callback: "api:dog"
+                        - - text: "😂 Random Joke"
+                            callback: "api:joke"
+                          - text: "📊 Crypto Prices"
+                            callback: "api:crypto"
+                    add_back: true
+                    add_main: true
+                input_type: callback
+                store_as: selectedAPI
+                on_complete: executeAPICall
+
+    dynamic_buttons:
+        id: dynamic_buttons
+        name: "Dynamic Button Test"
+        initial_step: select_crypto
+        steps:
+            select_crypto:
+                id: select_crypto
+                prompt_text: |
+                    🎯 *Dynamic Button Test*
+
+                    The following button data comes from real API:
+                    (Real-time cryptocurrency prices)
+                keyboard:
+                    type: dynamic
+                    provider: getCryptoPrices
+                    columns: 2
+                    add_back: true
+                    add_main: true
+                    callback_prefix: "crypto:"
+                input_type: callback
+                store_as: selectedCrypto
+                on_complete: showCryptoDetail
+
+environment:
+    is_test: true
+    version: "1.0.0"
