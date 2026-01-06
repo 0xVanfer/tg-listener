@@ -41,6 +41,18 @@ type (
 	Config = config.Config
 	// ButtonData represents dynamic button data for keyboard generation.
 	ButtonData = config.ButtonData
+	// HandlerRegistry holds all handler functions that can be referenced by configuration.
+	HandlerRegistry = config.HandlerRegistry
+	// CommandHandlerFunc is the function signature for command handlers.
+	CommandHandlerFunc = config.CommandHandlerFunc
+	// CallbackHandlerFunc is the function signature for callback handlers.
+	CallbackHandlerFunc = config.CallbackHandlerFunc
+	// StepHandlerFunc is the function signature for step completion handlers.
+	StepHandlerFunc = config.StepHandlerFunc
+	// KeyboardProviderFunc is the function signature for dynamic keyboard providers.
+	KeyboardProviderFunc = config.KeyboardProviderFunc
+	// ValidatorFunc is the function signature for custom validators.
+	ValidatorFunc = config.ValidatorFunc
 )
 
 // Re-export commonly used callback constants for handling user interactions.
@@ -69,6 +81,8 @@ var (
 	ParseCallbackData = core.ParseCallbackData
 	// GetTopicID extracts the message thread ID from a message for group topic support.
 	GetTopicID = core.GetTopicID
+	// NewHandlerRegistry creates a new empty handler registry.
+	NewHandlerRegistry = config.NewHandlerRegistry
 )
 
 // Wrapper is the main entry point of tgwrapper library.
@@ -117,14 +131,25 @@ func New(cfg *config.Config) (*Wrapper, error) {
 		return nil, err
 	}
 
-	// Create conversation manager with default TTL
-	convManager := conv.NewManager(30 * time.Minute)
+	// Get TTL from configuration or use default
+	ttl := 30 * time.Minute
+	if cfg.Bot != nil && cfg.Bot.DefaultTTL > 0 {
+		ttl = cfg.Bot.DefaultTTL
+	}
+
+	// Create conversation manager with configured TTL
+	convManager := conv.NewManager(ttl)
 
 	// Create flow engine for processing conversation flows
 	flowEngine := conv.NewFlowEngine(cfg)
 
 	// Create router for dispatching updates
 	router := handler.NewRouter(bot, cfg, convManager, flowEngine)
+
+	// Set debug mode from configuration
+	if cfg.Bot != nil && cfg.Bot.Debug {
+		router.SetDebug(true)
+	}
 
 	// Create menu manager for menu display
 	menuManager := menu.NewManager(bot, cfg)
@@ -146,6 +171,231 @@ func New(cfg *config.Config) (*Wrapper, error) {
 	w.router.SetStepDisplayFunc(w.showStepPrompt)
 
 	return w, nil
+}
+
+// NewWithHandlers creates a new Wrapper instance with the provided configuration and handler registry.
+// This is the recommended way to create a Wrapper as it enables configuration-driven handler registration.
+// All handlers defined in the registry are automatically registered and linked to the configuration.
+//
+// Parameters:
+//   - cfg: The configuration containing bot token, menus, flows, and other settings
+//   - registry: The handler registry containing all handler implementations
+//
+// Returns:
+//   - *Wrapper: The initialized wrapper instance with all handlers registered
+//   - error: Error if configuration is invalid or bot creation fails
+//
+// Example:
+//
+//	cfg, _ := config.LoadFromFile("config.yaml")
+//	registry := tgwrapper.NewHandlerRegistry()
+//	registry.RegisterCommand("menu", menuHandler)
+//	registry.RegisterStepHandler("handleInput", inputHandler)
+//	wrapper, err := tgwrapper.NewWithHandlers(cfg, registry)
+func NewWithHandlers(cfg *config.Config, registry *config.HandlerRegistry) (*Wrapper, error) {
+	w, err := New(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply handler registry
+	w.applyHandlerRegistry(registry)
+
+	// Register handlers from configuration
+	w.registerConfiguredHandlers(registry)
+
+	return w, nil
+}
+
+// applyHandlerRegistry applies all handlers from the registry to the wrapper.
+func (w *Wrapper) applyHandlerRegistry(registry *config.HandlerRegistry) {
+	if registry == nil {
+		return
+	}
+
+	// Set authentication function
+	if registry.AuthFunc != nil {
+		w.bot.SetAuthFunc(func(ctx context.Context, userID int64, username string) bool {
+			return registry.AuthFunc(ctx, userID, username)
+		})
+	}
+
+	// Register step handlers with type conversion
+	for name, handler := range registry.StepHandlers {
+		h := handler // capture loop variable
+		w.flowEngine.RegisterStepHandler(name, func(ctx context.Context, c *conv.Conversation) error {
+			return h(ctx, c)
+		})
+	}
+
+	// Register keyboard providers with type conversion
+	for name, provider := range registry.KeyboardProviders {
+		p := provider // capture loop variable
+		w.flowEngine.RegisterKeyboardProvider(name, func(ctx context.Context, c *conv.Conversation) []config.ButtonData {
+			return p(ctx, c)
+		})
+	}
+
+	// Register validators with type conversion
+	for name, validator := range registry.Validators {
+		v := validator // capture loop variable
+		w.flowEngine.RegisterValidator(name, func(value string, c *conv.Conversation) error {
+			return v(value, c)
+		})
+	}
+
+	// Set conversation lifecycle hooks
+	if registry.OnConversationStart != nil {
+		fn := registry.OnConversationStart
+		w.convManager.SetOnStart(func(ctx context.Context, c *conv.Conversation) {
+			fn(ctx, c)
+		})
+	}
+
+	if registry.OnConversationEnd != nil {
+		fn := registry.OnConversationEnd
+		w.convManager.SetOnEnd(func(ctx context.Context, c *conv.Conversation) {
+			fn(ctx, c)
+		})
+	}
+
+	if registry.OnStepChange != nil {
+		fn := registry.OnStepChange
+		w.convManager.SetOnStepChange(func(ctx context.Context, c *conv.Conversation, from, to string) {
+			fn(ctx, c, from, to)
+		})
+	}
+}
+
+// registerConfiguredHandlers registers handlers based on configuration.
+// This connects command and callback configurations to their handler implementations.
+func (w *Wrapper) registerConfiguredHandlers(registry *config.HandlerRegistry) {
+	if w.config.Bot == nil {
+		return
+	}
+
+	// Register command handlers from configuration
+	for _, cmd := range w.config.Bot.Commands {
+		cmdCfg := cmd // capture loop variable
+
+		// If handler is specified, look it up in registry
+		if cmdCfg.Handler != "" && registry != nil {
+			if handler, ok := registry.CommandHandlers[cmdCfg.Handler]; ok {
+				w.router.RegisterCommand(cmdCfg.Command, func(ctx context.Context, msg telego.Message) error {
+					return handler(ctx, msg)
+				})
+				continue
+			}
+		}
+
+		// Handle built-in actions
+		switch cmdCfg.Action {
+		case "show_menu":
+			target := cmdCfg.Target
+			w.router.RegisterCommand(cmdCfg.Command, func(ctx context.Context, msg telego.Message) error {
+				return w.ShowMainMenu(ctx, msg.Chat.ID, msg.MessageThreadID, 0)
+			})
+			if target != "" && target != "main" {
+				targetID := target
+				w.router.RegisterCommand(cmdCfg.Command, func(ctx context.Context, msg telego.Message) error {
+					return w.ShowMenu(ctx, msg.Chat.ID, msg.MessageThreadID, targetID, 0)
+				})
+			}
+		case "start_flow":
+			if cmdCfg.Target != "" {
+				flowID := cmdCfg.Target
+				w.router.RegisterCommand(cmdCfg.Command, func(ctx context.Context, msg telego.Message) error {
+					_, err := w.StartConversation(ctx, msg.From.ID, msg.Chat.ID, msg.MessageThreadID, flowID, 0)
+					if err != nil {
+						return w.ShowMainMenu(ctx, msg.Chat.ID, msg.MessageThreadID, 0)
+					}
+					c := w.convManager.Get(msg.From.ID, msg.Chat.ID)
+					if c != nil {
+						return w.showStepPrompt(ctx, c)
+					}
+					return nil
+				})
+			}
+		}
+	}
+
+	// Register callback handlers from configuration
+	for _, cb := range w.config.Callbacks {
+		cbCfg := cb // capture loop variable
+
+		// If handler is specified, look it up in registry
+		if cbCfg.Handler != "" && registry != nil {
+			if handler, ok := registry.CallbackHandlers[cbCfg.Handler]; ok {
+				if cbCfg.IsPrefix {
+					w.router.RegisterCallbackPrefix(cbCfg.Callback, func(ctx context.Context, query telego.CallbackQuery) error {
+						return handler(ctx, query)
+					})
+				} else {
+					w.router.RegisterCallback(cbCfg.Callback, func(ctx context.Context, query telego.CallbackQuery) error {
+						return handler(ctx, query)
+					})
+				}
+				continue
+			}
+		}
+
+		// Handle built-in actions
+		switch cbCfg.Action {
+		case "show_menu":
+			target := cbCfg.Target
+			answerText := cbCfg.AnswerText
+			if cbCfg.IsPrefix {
+				w.router.RegisterCallbackPrefix(cbCfg.Callback, func(ctx context.Context, query telego.CallbackQuery) error {
+					_ = w.bot.AnswerCallback(ctx, query.ID, answerText)
+					chatID := query.Message.GetChat().ID
+					msgID := query.Message.GetMessageID()
+					if target == "" || target == "main" {
+						_, err := w.menuManager.EditToMainMenu(ctx, chatID, msgID, nil)
+						return err
+					}
+					_, err := w.menuManager.EditToMenu(ctx, chatID, msgID, target, nil)
+					return err
+				})
+			} else {
+				w.router.RegisterCallback(cbCfg.Callback, func(ctx context.Context, query telego.CallbackQuery) error {
+					_ = w.bot.AnswerCallback(ctx, query.ID, answerText)
+					chatID := query.Message.GetChat().ID
+					msgID := query.Message.GetMessageID()
+					if target == "" || target == "main" {
+						_, err := w.menuManager.EditToMainMenu(ctx, chatID, msgID, nil)
+						return err
+					}
+					_, err := w.menuManager.EditToMenu(ctx, chatID, msgID, target, nil)
+					return err
+				})
+			}
+		case "start_flow":
+			if cbCfg.Target != "" {
+				flowID := cbCfg.Target
+				answerText := cbCfg.AnswerText
+				w.router.RegisterCallback(cbCfg.Callback, func(ctx context.Context, query telego.CallbackQuery) error {
+					_ = w.bot.AnswerCallback(ctx, query.ID, answerText)
+					chatID := query.Message.GetChat().ID
+					topicID := core.GetTopicID(query.Message)
+					msgID := query.Message.GetMessageID()
+					_, err := w.StartConversation(ctx, query.From.ID, chatID, topicID, flowID, msgID)
+					if err != nil {
+						return w.ShowMainMenu(ctx, chatID, topicID, msgID)
+					}
+					c := w.convManager.Get(query.From.ID, chatID)
+					if c != nil {
+						return w.showStepPrompt(ctx, c)
+					}
+					return nil
+				})
+			}
+		case "answer":
+			answerText := cbCfg.AnswerText
+			w.router.RegisterCallback(cbCfg.Callback, func(ctx context.Context, query telego.CallbackQuery) error {
+				return w.bot.AnswerCallback(ctx, query.ID, answerText)
+			})
+		}
+	}
 }
 
 // setupInternalHandlers registers internal handlers for built-in callbacks.
@@ -257,6 +507,9 @@ func (w *Wrapper) Stop() {
 		_ = w.botHandler.Stop()
 	}
 	close(w.stopChan)
+	if w.config.Bot.DeleteCommandsOnExit {
+		_ = w.Bot().Telego().DeleteMyCommands(context.Background(), nil)
+	}
 }
 
 // Bot returns the underlying core.Bot instance for direct Telegram API access.

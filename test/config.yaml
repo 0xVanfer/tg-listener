@@ -6,12 +6,26 @@ bot:
     commands:
         - command: menu
           description: "📱 Show main menu"
+          action: show_menu # Built-in action: show main menu
+          target: main
         - command: help
           description: "❓ Show help information"
+          handler: helpHandler # Custom handler reference
         - command: test
           description: "🧪 Quick test"
+          handler: testHandler # Custom handler reference
     delete_commands_on_exit: true
     debug: true
+    default_ttl: 10m # Conversation timeout
+
+# Callback handlers configured through config
+callbacks:
+    - callback: show_info
+      handler: showInfoHandler
+      is_prefix: false
+    - callback: level_4_action
+      handler: level4ActionHandler
+      is_prefix: false
 
 main_menu_id: "main"
 

@@ -1,6 +1,6 @@
 // Package main provides a test application for tg-listener library.
 // This test script demonstrates loading configuration from YAML file
-// and registering custom handlers for testing all features.
+// and registering custom handlers using the HandlerRegistry pattern.
 package main
 
 import (
@@ -19,7 +19,6 @@ import (
 
 	tgwrapper "github.com/0xVanfer/tg-listener"
 	"github.com/0xVanfer/tg-listener/config"
-	"github.com/0xVanfer/tg-listener/conv"
 	"github.com/0xVanfer/tg-listener/core"
 )
 
@@ -40,32 +39,18 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Get bot token from environment variable if not set in config
-	if cfg.Bot.Token == "" || cfg.Bot.Token == "${BOT_TOKEN}" {
-		token := os.Getenv("BOT_TOKEN")
-		if token == "" {
-			log.Fatal("BOT_TOKEN environment variable is not set")
-		}
-		cfg.Bot.Token = token
-	}
+	// Create handler registry with all handlers defined
+	registry := createHandlerRegistry()
 
-	// Initialize the wrapper
-	wrapper, err := tgwrapper.New(cfg)
+	// Initialize the wrapper with configuration and handlers
+	// All handlers are registered automatically based on config references
+	wrapper, err := tgwrapper.NewWithHandlers(cfg, registry)
 	if err != nil {
 		log.Fatalf("Failed to create wrapper: %v", err)
 	}
 
-	// Store wrapper reference for step handlers
+	// Store wrapper reference for step handlers that need to send messages
 	globalWrapper = wrapper
-
-	// Set authentication function - allows all users for testing
-	wrapper.SetAuthFunc(func(ctx context.Context, userID int64, username string) bool {
-		log.Printf("✅ User authenticated: userID=%d, username=%s", userID, username)
-		return true
-	})
-
-	// Register all handlers
-	registerHandlers(wrapper)
 
 	// Create context with interrupt signal handling
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -89,12 +74,9 @@ func main() {
 	<-ctx.Done()
 	log.Println("🛑 Stopping Bot...")
 
-	// Cleanup
-	if cfg.Bot.DeleteCommandsOnExit {
-		log.Println("🗑️  Deleting registered commands...")
-		_ = wrapper.Bot().Telego().DeleteMyCommands(context.Background(), nil)
-	}
-
+	// Stop() automatically handles:
+	// - Stopping the bot handler
+	// - Deleting commands if DeleteCommandsOnExit is true in config
 	wrapper.Stop()
 	log.Println("👋 Bot stopped")
 }
@@ -123,20 +105,25 @@ func loadConfig(path string) (*config.Config, error) {
 	return cfg, nil
 }
 
-// registerHandlers registers all custom handlers for the test bot.
-func registerHandlers(wrapper *tgwrapper.Wrapper) {
-	// ===========================================
-	// Command Handlers
-	// ===========================================
+// createHandlerRegistry creates and configures all handlers.
+// Handler names must match those referenced in config.yaml.
+func createHandlerRegistry() *tgwrapper.HandlerRegistry {
+	registry := tgwrapper.NewHandlerRegistry()
 
-	// /menu command - displays the main menu
-	wrapper.RegisterCommand("menu", func(ctx context.Context, msg telego.Message) error {
-		log.Printf("📨 /menu from user %d", msg.From.ID)
-		return wrapper.ShowMainMenu(ctx, msg.Chat.ID, msg.MessageThreadID, 0)
+	// ===========================================
+	// Authentication Function
+	// ===========================================
+	registry.SetAuthFunc(func(ctx context.Context, userID int64, username string) bool {
+		log.Printf("✅ User authenticated: userID=%d, username=%s", userID, username)
+		return true // Allow all users for testing
 	})
 
-	// /help command - displays help information
-	wrapper.RegisterCommand("help", func(ctx context.Context, msg telego.Message) error {
+	// ===========================================
+	// Command Handlers (referenced by name in config)
+	// ===========================================
+
+	// helpHandler - referenced in config as handler: "helpHandler"
+	registry.RegisterCommand("helpHandler", func(ctx context.Context, msg telego.Message) error {
 		log.Printf("📨 /help from user %d", msg.From.ID)
 
 		b := core.NewBuilder()
@@ -156,12 +143,15 @@ func registerHandlers(wrapper *tgwrapper.Wrapper) {
 		b.Line("Configuration loaded from: test/config.yaml")
 		text, entities := b.Build()
 
-		_, err := wrapper.SendTo(ctx, msg.Chat.ID, msg.MessageThreadID, text, entities...)
-		return err
+		if globalWrapper != nil {
+			_, err := globalWrapper.SendTo(ctx, msg.Chat.ID, msg.MessageThreadID, text, entities...)
+			return err
+		}
+		return nil
 	})
 
-	// /test command - displays quick test info
-	wrapper.RegisterCommand("test", func(ctx context.Context, msg telego.Message) error {
+	// testHandler - referenced in config as handler: "testHandler"
+	registry.RegisterCommand("testHandler", func(ctx context.Context, msg telego.Message) error {
 		log.Printf("📨 /test from user %d", msg.From.ID)
 
 		b := core.NewBuilder()
@@ -176,23 +166,30 @@ func registerHandlers(wrapper *tgwrapper.Wrapper) {
 		kb.Row(core.Button("📱 Open Main Menu", "main_menu"))
 		kb.Row(core.Button("🌐 Test API", "flow:api_test"))
 
-		_, err := wrapper.SendToWithKeyboard(ctx, msg.Chat.ID, msg.MessageThreadID, text, kb.Build(), entities...)
-		return err
-	})
-
-	// ===========================================
-	// Callback Handlers
-	// ===========================================
-
-	// show_info callback
-	wrapper.RegisterCallback("show_info", func(ctx context.Context, query telego.CallbackQuery) error {
-		_ = wrapper.AnswerCallback(ctx, query.ID, "ℹ️ This is Level 3-B information")
+		if globalWrapper != nil {
+			_, err := globalWrapper.SendToWithKeyboard(ctx, msg.Chat.ID, msg.MessageThreadID, text, kb.Build(), entities...)
+			return err
+		}
 		return nil
 	})
 
-	// level_4_action callback
-	wrapper.RegisterCallback("level_4_action", func(ctx context.Context, query telego.CallbackQuery) error {
-		_ = wrapper.AnswerCallback(ctx, query.ID, "🎉 Action executed!")
+	// ===========================================
+	// Callback Handlers (referenced by name in config)
+	// ===========================================
+
+	// showInfoHandler - referenced in config as handler: "showInfoHandler"
+	registry.RegisterCallback("showInfoHandler", func(ctx context.Context, query telego.CallbackQuery) error {
+		if globalWrapper != nil {
+			_ = globalWrapper.AnswerCallback(ctx, query.ID, "ℹ️ This is Level 3-B information")
+		}
+		return nil
+	})
+
+	// level4ActionHandler - referenced in config as handler: "level4ActionHandler"
+	registry.RegisterCallback("level4ActionHandler", func(ctx context.Context, query telego.CallbackQuery) error {
+		if globalWrapper != nil {
+			_ = globalWrapper.AnswerCallback(ctx, query.ID, "🎉 Action executed!")
+		}
 
 		chatID := query.Message.GetChat().ID
 		msgID := query.Message.GetMessageID()
@@ -209,16 +206,19 @@ func registerHandlers(wrapper *tgwrapper.Wrapper) {
 		kb.Row(core.Button("⬅️ Back to Level 4", "menu:level_4"))
 		kb.Row(core.Button("🏠 Main Menu", "main_menu"))
 
-		_, err := wrapper.EditMessageKeyboard(ctx, chatID, msgID, text, kb.Build(), entities...)
-		return err
+		if globalWrapper != nil {
+			_, err := globalWrapper.EditMessageKeyboard(ctx, chatID, msgID, text, kb.Build(), entities...)
+			return err
+		}
+		return nil
 	})
 
 	// ===========================================
-	// Keyboard Providers
+	// Keyboard Providers (referenced by name in config)
 	// ===========================================
 
-	// getCryptoPrices - fetches real crypto prices from API
-	wrapper.RegisterKeyboardProvider("getCryptoPrices", func(ctx context.Context, c *conv.Conversation) []config.ButtonData {
+	// getCryptoPrices - referenced in config as provider: "getCryptoPrices"
+	registry.RegisterKeyboardProvider("getCryptoPrices", func(ctx context.Context, convI interface{}) []config.ButtonData {
 		log.Println("🔄 Fetching cryptocurrency prices...")
 
 		prices, err := fetchCryptoPrices()
@@ -243,11 +243,12 @@ func registerHandlers(wrapper *tgwrapper.Wrapper) {
 	})
 
 	// ===========================================
-	// Step Handlers
+	// Step Handlers (referenced by name in config)
 	// ===========================================
 
-	// handleTextInputAction - processes text input flow
-	wrapper.RegisterStepHandler("handleTextInputAction", func(ctx context.Context, c *conv.Conversation) error {
+	// handleTextInputAction - referenced in config as on_complete: "handleTextInputAction"
+	registry.RegisterStepHandler("handleTextInputAction", func(ctx context.Context, convI interface{}) error {
+		c := convI.(*tgwrapper.Conversation)
 		action := core.ParseCallbackData(c.GetString("selectedAction"), "action:")
 		userName := c.GetString("userName")
 		userMessage := c.GetString("userMessage")
@@ -281,8 +282,9 @@ func registerHandlers(wrapper *tgwrapper.Wrapper) {
 		return nil
 	})
 
-	// executeAPICall - executes API calls
-	wrapper.RegisterStepHandler("executeAPICall", func(ctx context.Context, c *conv.Conversation) error {
+	// executeAPICall - referenced in config as on_complete: "executeAPICall"
+	registry.RegisterStepHandler("executeAPICall", func(ctx context.Context, convI interface{}) error {
+		c := convI.(*tgwrapper.Conversation)
 		api := core.ParseCallbackData(c.GetString("selectedAPI"), "api:")
 		log.Printf("🌐 API call: %s", api)
 
@@ -324,8 +326,9 @@ func registerHandlers(wrapper *tgwrapper.Wrapper) {
 		return nil
 	})
 
-	// showCryptoDetail - shows crypto details
-	wrapper.RegisterStepHandler("showCryptoDetail", func(ctx context.Context, c *conv.Conversation) error {
+	// showCryptoDetail - referenced in config as on_complete: "showCryptoDetail"
+	registry.RegisterStepHandler("showCryptoDetail", func(ctx context.Context, convI interface{}) error {
+		c := convI.(*tgwrapper.Conversation)
 		crypto := core.ParseCallbackData(c.GetString("selectedCrypto"), "crypto:")
 		log.Printf("🎯 Selected crypto: %s", crypto)
 
@@ -348,14 +351,21 @@ func registerHandlers(wrapper *tgwrapper.Wrapper) {
 		return nil
 	})
 
-	// Set lifecycle hooks
-	wrapper.OnConversationStart(func(ctx context.Context, c *conv.Conversation) {
+	// ===========================================
+	// Conversation Lifecycle Hooks
+	// ===========================================
+
+	registry.SetOnConversationStart(func(ctx context.Context, convI interface{}) {
+		c := convI.(*tgwrapper.Conversation)
 		log.Printf("🟢 Conversation started: flow=%s, user=%d", c.FlowID, c.UserID)
 	})
 
-	wrapper.OnConversationEnd(func(ctx context.Context, c *conv.Conversation) {
+	registry.SetOnConversationEnd(func(ctx context.Context, convI interface{}) {
+		c := convI.(*tgwrapper.Conversation)
 		log.Printf("🔴 Conversation ended: flow=%s, user=%d", c.FlowID, c.UserID)
 	})
+
+	return registry
 }
 
 // ===========================================

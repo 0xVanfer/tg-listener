@@ -22,6 +22,10 @@ type Config struct {
 	// Use AddFlow() to add flows programmatically.
 	Flows map[string]*FlowConfig `json:"flows" yaml:"flows" mapstructure:"flows"`
 
+	// Callbacks is a list of callback handler configurations.
+	// These are registered automatically when the wrapper is created.
+	Callbacks []CallbackConfig `json:"callbacks" yaml:"callbacks" mapstructure:"callbacks"`
+
 	// MainMenuID specifies which menu to use as the main/home menu.
 	// If empty, the menu with ID "main" is used by default.
 	MainMenuID string `json:"main_menu_id" yaml:"main_menu_id" mapstructure:"main_menu_id"`

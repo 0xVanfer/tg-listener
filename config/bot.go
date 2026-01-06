@@ -66,6 +66,39 @@ type CmdConfig struct {
 	// Handler is the name of the handler function to call.
 	// This is looked up in the registered handlers map.
 	Handler string `json:"handler" yaml:"handler" mapstructure:"handler"`
+
+	// Action specifies the built-in action to perform.
+	// Supported values: "show_menu", "start_flow"
+	// Used as fallback when Handler is not set.
+	Action string `json:"action" yaml:"action" mapstructure:"action"`
+
+	// Target specifies the target for the action.
+	// For "show_menu": the menu ID to show
+	// For "start_flow": the flow ID to start
+	Target string `json:"target" yaml:"target" mapstructure:"target"`
+}
+
+// CallbackConfig defines a callback handler configuration.
+// This allows registering callback handlers through configuration.
+type CallbackConfig struct {
+	// Callback is the callback data or prefix to match.
+	Callback string `json:"callback" yaml:"callback" mapstructure:"callback"`
+
+	// IsPrefix determines if this is a prefix match or exact match.
+	IsPrefix bool `json:"is_prefix" yaml:"is_prefix" mapstructure:"is_prefix"`
+
+	// Handler is the name of the handler function to call.
+	Handler string `json:"handler" yaml:"handler" mapstructure:"handler"`
+
+	// Action specifies the built-in action to perform.
+	// Supported values: "show_menu", "start_flow", "answer"
+	Action string `json:"action" yaml:"action" mapstructure:"action"`
+
+	// Target specifies the target for the action.
+	Target string `json:"target" yaml:"target" mapstructure:"target"`
+
+	// AnswerText is the text to show in callback answer notification.
+	AnswerText string `json:"answer_text" yaml:"answer_text" mapstructure:"answer_text"`
 }
 
 // NewDefaultBotConfig creates a BotConfig with sensible default values.
